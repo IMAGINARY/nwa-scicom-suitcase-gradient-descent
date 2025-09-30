@@ -1,6 +1,6 @@
 {
-  "defaultLanguage": "de",
-  "languages": ["de", "en"],
+  "defaultLanguage": "nl",
+  "languages": ["nl", "en"],
   "useGamepads": true,
   "useScreenControls": false,
   "useKeyboardControls": true,
