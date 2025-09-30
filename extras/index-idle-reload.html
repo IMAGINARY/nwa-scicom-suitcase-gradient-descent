@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, shrink-to-fit=no"
+    />
+    <style>
+      html {
+        background-color: #151515;
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        border: none;
+        overflow: hidden;
+      }
+
+      iframe {
+        width: 100vw;
+        height: 100vh;
+        border: none;
+      }
+    </style>
+  </head>
+  <body>
+    <iframe name="app" src="index.html"></iframe>
+    <script type="module">
+      import { Idler } from "./idler.modern-v0.3.1.js";
+
+      // The following is based on some code from the kiosk-browser project
+
+      const searchParams = new URLSearchParams(window.location.search);
+      const idleTimeoutDefault = 3 * 60;
+      const idleTimeoutParsed = Number.parseInt(
+        searchParams.get("idleTimeout") ?? idleTimeoutDefault
+      );
+      const idleTimeout = Number.isFinite(idleTimeoutParsed)
+        ? idleTimeoutParsed
+        : idleTimeoutDefault;
+      console.log({ idleTimeout });
+
+      const idler = new Idler();
+
+      const app = window.frames.app;
+
+      /**
+       * from createList.js
+       */
+      function createList(a) {
+        const add = (e) => a.push(e);
+        const remove = (e) => {
+          const i = a.indexOf(e);
+          if (i >= 0) {
+            a.splice(i, 1);
+          }
+        };
+        const clear = () => {
+          // eslint-disable-next-line no-param-reassign
+          a.length = 0;
+        };
+
+        return { add, remove, clear };
+      }
+
+      /**
+       * from domReady.js
+       */
+      const domReady = (app) =>
+        new Promise((resolve) => {
+          if (
+            app.document.readyState === "complete" ||
+            app.document.readyState === "interactive"
+          ) {
+            resolve();
+          } else {
+            app.addEventListener("DOMContentLoaded", () => resolve());
+          }
+        });
+
+      /**
+       * from gamepadInputDetector.js
+       */
+
+      const deviceFilters = [];
+      const stateFilters = [];
+
+      window.kioskBrowser ??= {};
+      window.kioskBrowser.idleDetector ??= {};
+      Object.assign(window.kioskBrowser.idleDetector, {
+        gamepad: {
+          deviceFilters: createList(deviceFilters),
+          stateFilters: createList(stateFilters),
+        },
+      });
+
+      const requestResetIdleTime = () => idler.interrupt();
+
+      let lastEventTimestampMs = -1;
+      let animationFrameRequestId = 0;
+      let timeoutId = 0;
+
+      const gamepadIndices = new Set();
+
+      function loop(app) {
+        app.clearTimeout(timeoutId);
+        app.cancelAnimationFrame(animationFrameRequestId);
+
+        // Discard disconnected gamepads
+        const gamepads = [...app.navigator.getGamepads()].filter(
+          (gamepad) => gamepad !== null
+        );
+
+        // Discard gamepads via device filter
+        const deviceFilteredGamepads = gamepads.filter((gamepad) =>
+          gamepadIndices.has(gamepad.index)
+        );
+
+        if (gamepads.length > 0) {
+          // Discard gamepads through state filter
+          const stateFilteredGamepads = deviceFilteredGamepads
+            .filter((gamepad) => lastEventTimestampMs < gamepad.timestamp)
+            .filter(
+              (gamepad) =>
+                !stateFilters.reduce((acc, cur) => acc || cur(gamepad), false)
+            );
+
+          // Keep timestamp to avoid processing the same state twice (important for state filters)
+          lastEventTimestampMs = Math.max(
+            ...gamepads.map((gp) => gp.timestamp)
+          );
+
+          // If there are gamepads left -> request idle time reset
+          if (stateFilteredGamepads.length > 0) {
+            const maxTimestampMs = Math.max(
+              ...stateFilteredGamepads.map((gp) => gp.timestamp)
+            );
+            requestResetIdleTime(maxTimestampMs);
+          }
+
+          // we poll every frame
+          animationFrameRequestId = app.requestAnimationFrame(() => loop(app));
+        }
+      }
+
+      function handleGamepadConnected(gamepadEvent) {
+        const { gamepad } = gamepadEvent;
+        const discard = deviceFilters.reduce(
+          (acc, cur) => acc || cur(gamepad),
+          false
+        );
+        if (!discard) {
+          gamepadIndices.add(gamepad.index);
+          loop(app);
+        }
+      }
+
+      function handleGamepadDisconnected(gamepadEvent) {
+        const { gamepad } = gamepadEvent;
+        gamepadIndices.delete(gamepad.index);
+      }
+
+      if (
+        true /*app.document.featurePolicy.allowsFeature("gamepad")*/ /* not supported on Safari */
+      ) {
+        (async () => {
+          await domReady(app);
+          app.addEventListener("gamepadconnected", handleGamepadConnected);
+          app.addEventListener(
+            "gamepaddisconnected",
+            handleGamepadDisconnected
+          );
+          loop(app);
+        })();
+      }
+
+      /**
+       * from filterGamepadDeviceState.js
+       */
+
+      const lastButtonss = [];
+      const lastAxess = [];
+
+      /**
+       * Register the gamepad in lastButtons when it is connected.
+       */
+      function deviceFilter(gamepad) {
+        lastButtonss[gamepad.index] = [
+          ...gamepad.buttons.map((b) => b.pressed),
+        ];
+        lastAxess[gamepad.index] = [...gamepad.axes.map((a) => Math.round(a))];
+        return false;
+      }
+
+      /**
+       * Discard state changes where the gamepad.buttons didn't change, but maybe there was a change in
+       * one of the gamepad.axis or other properties.
+       */
+      function stateFilter(gamepad) {
+        const lastButtons = lastButtonss[gamepad.index];
+        const curButtons = [...gamepad.buttons.map((b) => b.pressed)];
+        const buttonsChanged = curButtons.reduce(
+          (acc, cur, i) => acc || lastButtons[i] !== cur,
+          false
+        );
+        lastButtonss[gamepad.index] = curButtons;
+
+        const lastAxes = lastAxess[gamepad.index];
+        const curAxes = [...gamepad.axes.map((a) => Math.round(a))];
+        const axesChanged = curAxes.reduce(
+          (acc, cur, i) => acc || lastAxes[i] !== cur,
+          false
+        );
+        lastAxess[gamepad.index] = curAxes;
+
+        if (buttonsChanged || axesChanged) {
+          console.log(
+            "NOT ignoring state change because a button changed.",
+            gamepad
+          );
+          return false;
+        } else {
+          console.log(
+            "Ignoring state change because NO button changed.",
+            gamepad
+          );
+          return true;
+        }
+      }
+
+      kioskBrowser.idleDetector.gamepad.deviceFilters.add(deviceFilter);
+      kioskBrowser.idleDetector.gamepad.stateFilters.add(stateFilter);
+
+      (async () => {
+        await domReady(app);
+
+        // Hack to forward key events to the iframe
+        window.addEventListener("keydown", (e) =>
+          app.dispatchEvent(
+            new KeyboardEvent("keydown", { key: e.key, code: e.code })
+          )
+        );
+        window.addEventListener("keyup", (e) =>
+          app.dispatchEvent(
+            new KeyboardEvent("keyup", { key: e.key, code: e.code })
+          )
+        );
+
+        app.addEventListener("keydown", requestResetIdleTime);
+        app.addEventListener("keyup", requestResetIdleTime);
+
+        const callbackOptions = {
+          delay: idleTimeout * 1000, // idle after not being interrupted idleTimeout seconds
+          onBegin: () => window.location.reload(), // called after idleTimeout seconds without interruption
+        };
+        const cbId = idler.addCallback(callbackOptions);
+      })();
+    </script>
+  </body>
+</html>
