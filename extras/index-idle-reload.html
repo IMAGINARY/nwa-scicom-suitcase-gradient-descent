@@ -42,6 +42,8 @@
         : idleTimeoutDefault;
       console.log({ idleTimeout });
 
+      const ingoreButtons = searchParams.getAll("ignoreButton").map(n => Number.parseInt(n))
+
       const idler = new Idler();
 
       const iframe = document.createElement("iframe");
@@ -188,7 +190,7 @@
         const lastButtons = lastButtonss[gamepad.index];
         const curButtons = [...gamepad.buttons.map((b) => b.pressed)];
         const buttonsChanged = curButtons.reduce(
-          (acc, cur, i) => acc || lastButtons[i] !== cur,
+          (acc, cur, i) => acc || (!ingoreButtons.includes(i) && lastButtons[i] !== cur),
           false
         );
         lastButtonss[gamepad.index] = curButtons;
