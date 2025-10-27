@@ -27,7 +27,6 @@
     </style>
   </head>
   <body>
-    <iframe name="app"></iframe>
     <script type="module">
       import { Idler } from "./idler.modern-v0.3.1.js";
 
@@ -45,8 +44,11 @@
 
       const idler = new Idler();
 
-      const app = window.frames.app;
-      app.src = `index.html?${window.location.search}`
+      const iframe = document.createElement("iframe");
+      iframe.src = `./index.html${window.location.search}`;
+      document.body.prepend(iframe);
+      await new Promise(resolve => iframe.addEventListener("load", () => resolve()));
+      const app = iframe.contentWindow;
 
       /**
        * from createList.js
@@ -66,21 +68,6 @@
 
         return { add, remove, clear };
       }
-
-      /**
-       * from domReady.js
-       */
-      const domReady = (app) =>
-        new Promise((resolve) => {
-          if (
-            app.document.readyState === "complete" ||
-            app.document.readyState === "interactive"
-          ) {
-            resolve();
-          } else {
-            app.addEventListener("DOMContentLoaded", () => resolve());
-          }
-        });
 
       /**
        * from gamepadInputDetector.js
@@ -167,15 +154,12 @@
       if (
         true /*app.document.featurePolicy.allowsFeature("gamepad")*/ /* not supported on Safari */
       ) {
-        (async () => {
-          await domReady(app);
-          app.addEventListener("gamepadconnected", handleGamepadConnected);
-          app.addEventListener(
-            "gamepaddisconnected",
-            handleGamepadDisconnected
-          );
-          loop(app);
-        })();
+        app.addEventListener("gamepadconnected", handleGamepadConnected);
+        app.addEventListener(
+          "gamepaddisconnected",
+          handleGamepadDisconnected
+        );
+        loop(app);
       }
 
       /**
@@ -235,30 +219,26 @@
       kioskBrowser.idleDetector.gamepad.deviceFilters.add(deviceFilter);
       kioskBrowser.idleDetector.gamepad.stateFilters.add(stateFilter);
 
-      (async () => {
-        await domReady(app);
+      // Hack to forward key events to the iframe
+      window.addEventListener("keydown", (e) =>
+        app.dispatchEvent(
+          new KeyboardEvent("keydown", { key: e.key, code: e.code })
+        )
+      );
+      window.addEventListener("keyup", (e) =>
+        app.dispatchEvent(
+          new KeyboardEvent("keyup", { key: e.key, code: e.code })
+        )
+      );
 
-        // Hack to forward key events to the iframe
-        window.addEventListener("keydown", (e) =>
-          app.dispatchEvent(
-            new KeyboardEvent("keydown", { key: e.key, code: e.code })
-          )
-        );
-        window.addEventListener("keyup", (e) =>
-          app.dispatchEvent(
-            new KeyboardEvent("keyup", { key: e.key, code: e.code })
-          )
-        );
+      app.addEventListener("keydown", requestResetIdleTime);
+      app.addEventListener("keyup", requestResetIdleTime);
 
-        app.addEventListener("keydown", requestResetIdleTime);
-        app.addEventListener("keyup", requestResetIdleTime);
-
-        const callbackOptions = {
-          delay: idleTimeout * 1000, // idle after not being interrupted idleTimeout seconds
-          onBegin: () => window.location.reload(), // called after idleTimeout seconds without interruption
-        };
-        const cbId = idler.addCallback(callbackOptions);
-      })();
+      const callbackOptions = {
+        delay: idleTimeout * 1000, // idle after not being interrupted idleTimeout seconds
+        onBegin: () => window.location.reload(), // called after idleTimeout seconds without interruption
+      };
+      const cbId = idler.addCallback(callbackOptions);
     </script>
   </body>
 </html>
